@@ -57,6 +57,9 @@ jobs:
   publish:
     needs: [resolve, build-and-test]
     runs-on: ubuntu-latest
+    outputs:
+      base_url: ${{ steps.pub.outputs.base_url }}
+      prefix: ${{ steps.pub.outputs.prefix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -76,6 +79,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Publish to S3
+        id: pub
         env:
           PUBLIC_BASE_URL: https://packages.redis.io
           STAGING_BASE_URL: https://redis-test-package-repository.s3.us-east-2.amazonaws.com
@@ -101,3 +105,24 @@ jobs:
             --prefix "$PREFIX" \
             --dist dist \
             $MAKE_LATEST
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+
+  # Validate the just-published artifacts install and run across many distros.
+  # Runs natively per arch (amd64 on ubuntu-latest, arm64 on ubuntu-24.04-arm),
+  # so test-distros.sh's containers need no QEMU.
+  smoke-test:
+    needs: [resolve, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke test published artifacts across distros
+        env:
+          REDIS_CLI_BASE_URL: ${{ needs.publish.outputs.base_url }}/${{ needs.publish.outputs.prefix }}
+        run: ./test-distros.sh --arch ${{ matrix.arch }} --version "${{ needs.resolve.outputs.release_tag }}"

@@ -56,13 +56,15 @@ main() {
     else
         err "need curl or wget to download"
     fi
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256() { sha256sum "$1" | awk '{print $1}'; }
-    elif command -v shasum >/dev/null 2>&1; then
-        sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
-    else
-        sha256() { echo ""; }
-    fi
+    # SHA-256 of a file. Linux ships `sha256sum`; macOS ships `shasum` instead.
+    # Prints nothing if neither exists, so the caller can skip verification.
+    sha256_file() {
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$1" | awk '{print $1}'
+        elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$1" | awk '{print $1}'
+        fi
+    }
 
     TMP="$(mktemp -d "${TMPDIR:-/tmp}/redis-cli-install.XXXXXX")"
     trap 'rm -rf "$TMP"' EXIT
@@ -88,7 +90,7 @@ main() {
     if dl "${URL}.sha256" "$TMP/redis-cli.sha256" 2>/dev/null; then
         info "verifying checksum"
         expected="$(awk '{print $1}' "$TMP/redis-cli.sha256")"
-        actual="$(sha256 "$TMP/redis-cli")"
+        actual="$(sha256_file "$TMP/redis-cli")"
         if [ -z "$actual" ]; then
             info "no sha256 tool found, skipping verification"
         elif [ "$expected" != "$actual" ]; then
@@ -102,22 +104,24 @@ main() {
 
     if [ -n "${REDIS_CLI_INSTALL_DIR:-}" ]; then
         DEST="$REDIS_CLI_INSTALL_DIR"
-    elif [ -w /usr/local/bin ] 2>/dev/null; then
+    elif [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
         DEST=/usr/local/bin
     elif [ "$(id -u)" = "0" ]; then
         DEST=/usr/local/bin
     else
         DEST="$HOME/.local/bin"
     fi
-    mkdir -p "$DEST" 2>/dev/null || true
 
-    if [ -w "$DEST" ]; then
+    # Create the directory and install with the SAME privilege: creating DEST
+    # without sudo and then installing with sudo would fail if DEST needed root
+    # to create (install does not create parent directories).
+    if mkdir -p "$DEST" 2>/dev/null && [ -w "$DEST" ]; then
         install -m 0755 "$TMP/redis-cli" "$DEST/redis-cli"
     elif command -v sudo >/dev/null 2>&1; then
-        info "$DEST is not writable, using sudo"
-        sudo install -m 0755 "$TMP/redis-cli" "$DEST/redis-cli"
+        info "$DEST needs elevated privileges; using sudo"
+        sudo mkdir -p "$DEST" && sudo install -m 0755 "$TMP/redis-cli" "$DEST/redis-cli"
     else
-        err "$DEST is not writable and sudo is unavailable; set REDIS_CLI_INSTALL_DIR"
+        err "cannot write to $DEST and sudo is unavailable; set REDIS_CLI_INSTALL_DIR to a writable path"
     fi
 
     info "installed redis-cli to $DEST/redis-cli"

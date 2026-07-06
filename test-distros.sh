@@ -59,23 +59,31 @@ BARE_IMAGES=(alpine:3.21 ubuntu:24.04 debian:11 rockylinux:9 amazonlinux:2023 fe
 
 echo; echo "== 1. BARE-EXEC (no packages installed; proves static) =="
 for img in "${BARE_IMAGES[@]}"; do
-    out="$(docker run --rm --platform "$PLATFORM" -v "$WORK/redis-cli":/redis-cli:ro "$img" /redis-cli --version 2>&1)"
-    if [ $? -eq 0 ] && printf '%s' "$out" | grep -q '^redis-cli'; then pass "$img -> $out"; else fail "$img" "$out"; fi
+    if out="$(docker run --rm --platform "$PLATFORM" -v "$WORK/redis-cli":/redis-cli:ro "$img" /redis-cli --version 2>&1)" \
+       && printf '%s' "$out" | grep -q '^redis-cli'; then
+        pass "$img -> $out"
+    else
+        fail "$img" "$out"
+    fi
 done
 
 echo; echo "== 2. STATIC LINKAGE (ldd: no dynamic interpreter) =="
 g="$(docker run --rm --platform "$PLATFORM" -v "$WORK/redis-cli":/redis-cli:ro ubuntu:24.04 sh -c 'ldd /redis-cli 2>&1' || true)"
-printf '%s' "$g" | grep -q 'not a dynamic executable' && pass "glibc: $g" || fail "glibc ldd" "$g"
+if printf '%s' "$g" | grep -q 'not a dynamic executable'; then pass "glibc: $g"; else fail "glibc ldd" "$g"; fi
 m="$(docker run --rm --platform "$PLATFORM" -v "$WORK/redis-cli":/redis-cli:ro alpine:3.21 sh -c 'ldd /redis-cli 2>&1' || true)"
-printf '%s' "$m" | grep -q 'Not a valid dynamic program' && pass "musl: $m" || fail "musl ldd" "$m"
+if printf '%s' "$m" | grep -q 'Not a valid dynamic program'; then pass "musl: $m"; else fail "musl ldd" "$m"; fi
 
 echo; echo "== 3. INSTALL via install.sh | sh =="
 install_test() {
-    out="$(docker run --rm --platform "$PLATFORM" "$1" sh -c "
+    if out="$(docker run --rm --platform "$PLATFORM" "$1" sh -c "
         set -e; $2
         curl -fsSL '$BASE_URL/install.sh' | sh >/dev/null 2>&1
-        redis-cli --version" 2>&1)"
-    if [ $? -eq 0 ] && printf '%s' "$out" | grep -q '^redis-cli'; then pass "$1 -> $out"; else fail "$1" "$out"; fi
+        redis-cli --version" 2>&1)" \
+       && printf '%s' "$out" | grep -q '^redis-cli'; then
+        pass "$1 -> $out"
+    else
+        fail "$1" "$out"
+    fi
 }
 install_test ubuntu:24.04     "apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null 2>&1"
 install_test debian:12        "apt-get update -qq && apt-get install -y -qq curl ca-certificates >/dev/null 2>&1"

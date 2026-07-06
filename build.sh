@@ -19,11 +19,13 @@
 #              dynamic (Apple ships no static libSystem).
 #
 # Usage:
-#   build.sh --version REF [--os linux|darwin] [--arch amd64|arm64] [--output DIR]
+#   build.sh --version REF [--os linux|darwin] [--arch amd64|arm64]
+#            [--output DIR] [--sha256 HASH]
 #
 #   --version  Redis tag (e.g. 8.4.4) or branch (e.g. unstable)
 #   --os/--arch  default to the host
 #   --output   default ./dist
+#   --sha256   expected SHA-256 of the source tarball (skips verification if omitted)
 #
 set -euo pipefail
 
@@ -32,20 +34,45 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 host_os()   { case "$(uname -s)" in Linux) echo linux;; Darwin) echo darwin;; *) echo "unsupported OS: $(uname -s)" >&2; exit 1;; esac; }
 host_arch() { case "$(uname -m)" in x86_64|amd64) echo amd64;; aarch64|arm64) echo arm64;; *) echo "unsupported arch: $(uname -m)" >&2; exit 1;; esac; }
 
-# fetch_redis <ref> <dest>: download + extract the Redis source into <dest>.
+# sha256_file <file>: print a file's SHA-256 (portable across linux/macOS).
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+    else shasum -a 256 "$1" | awk '{print $1}'; fi
+}
+
+# fetch_redis <ref> <dest> [sha256]: download + extract the Redis source into
+# <dest>. If [sha256] is given, the tarball is verified against it before
+# extraction (mismatch aborts); otherwise verification is skipped.
 fetch_redis() {
-    fr_ref="$1"; fr_dest="$2"
+    fr_ref="$1"; fr_dest="$2"; fr_sha="${3:-}"
     fr_url="https://github.com/redis/redis/archive/${fr_ref}.tar.gz"
-    mkdir -p "$fr_dest"
+    fr_tar="$(mktemp "${TMPDIR:-/tmp}/redis-src.XXXXXX.tar.gz")"
     echo ">> Fetching Redis source: $fr_url"
-    curl -fsSL "$fr_url" | tar -xz -C "$fr_dest" --strip-components=1
+    curl -fsSL "$fr_url" -o "$fr_tar"
+
+    if [ -n "$fr_sha" ]; then
+        fr_actual="$(sha256_file "$fr_tar")"
+        if [ "$fr_sha" != "$fr_actual" ]; then
+            echo "ERROR: source checksum mismatch for $fr_ref" >&2
+            echo "  expected $fr_sha" >&2
+            echo "  actual   $fr_actual" >&2
+            rm -f "$fr_tar"; exit 1
+        fi
+        echo ">> Verified source checksum ($fr_actual)"
+    else
+        echo ">> No --sha256 given; skipping source verification"
+    fi
+
+    mkdir -p "$fr_dest"
+    tar -xzf "$fr_tar" -C "$fr_dest" --strip-components=1
+    rm -f "$fr_tar"
 }
 
 # compile <os> <arch> <src-root>: build redis-cli with static deps in place,
 # producing <src-root>/src/redis-cli. Passes static flags to the upstream
 # Redis Makefile (we don't own it, so there's no custom target).
 compile() {
-    co_os="$1"; co_arch="$2"; co_src="$3"
+    co_os="$1"; co_src="$2"
     jobs="$( (nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4) )"
     cd "$co_src"
 
@@ -98,25 +125,26 @@ build_linux() {
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
         alpine:3.21 sh -ec '
             apk add --no-cache build-base linux-headers openssl-dev openssl-libs-static pkgconfig perl >/dev/null
-            sh /build-scripts/build.sh --compile-only linux '"$bl_arch"' /src
+            sh /build-scripts/build.sh --compile-only linux /src
             chown -R "$HOST_UID:$HOST_GID" /src'
 }
 
-# --- internal: --compile-only <os> <arch> <src-root> (used inside container) --
+# --- internal: --compile-only <os> <src-root> (used inside container) --------
 if [ "${1:-}" = "--compile-only" ]; then
-    compile "$2" "$3" "$4"
+    compile "$2" "$3"
     exit 0
 fi
 
 # --- main -------------------------------------------------------------------
-OS="$(host_os)"; ARCH="$(host_arch)"; VERSION=""; OUTPUT="$SCRIPT_DIR/dist"
+OS="$(host_os)"; ARCH="$(host_arch)"; VERSION=""; OUTPUT="$SCRIPT_DIR/dist"; SHA256=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) VERSION="$2"; shift 2 ;;
         --os) OS="$2"; shift 2 ;;
         --arch) ARCH="$2"; shift 2 ;;
         --output) OUTPUT="$2"; shift 2 ;;
-        -h|--help) sed -n '12,26p' "$0"; exit 0 ;;
+        --sha256) SHA256="$2"; shift 2 ;;
+        -h|--help) sed -n '12,29p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -135,12 +163,12 @@ OUTPUT="$(cd "$OUTPUT" && pwd)"
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/redis-cli-build.XXXXXX")"
 trap 'rm -rf "$BUILD_DIR" 2>/dev/null || true' EXIT
 SRC="$BUILD_DIR/redis"
-fetch_redis "$VERSION" "$SRC"
+fetch_redis "$VERSION" "$SRC" "$SHA256"
 
 case "$OS" in
     darwin)
         [ "$(host_os)" = "darwin" ] || { echo "ERROR: macOS targets must be built on a macOS host." >&2; exit 1; }
-        compile "$OS" "$ARCH" "$SRC"
+        compile "$OS" "$SRC"
         ;;
     linux) build_linux "$ARCH" "$SRC" ;;
 esac

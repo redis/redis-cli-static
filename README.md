@@ -125,7 +125,7 @@ Matching `redis-debian`/`redis-rpm`, releases are driven by two
 | Workflow | Purpose |
 | -------- | ------- |
 | `release_build_and_test.yml` | Build all four targets and smoke-test them (no publish). |
-| `release_publish.yml` | Build, then publish. `release_type: internal` → staging bucket at its S3 URL; `release_type: public` → production bucket served at `https://packages.redis.io`. |
+| `release_publish.yml` | Build, then publish. `release_type: internal` → staging bucket at its S3 URL; `release_type: public` → production bucket served at `https://packages.redis.io`. After publishing it runs `test-distros.sh` against the just-published artifacts (amd64 + arm64) as a smoke test. |
 
 Both accept a `release_tag` (defaults to `.redis_version`). Publishing to the
 public channel moves the `stable`/`latest` pointers only when `make_latest` is
@@ -143,6 +143,9 @@ Pre-releases (e.g. `8.8-rc1`) are installable by exact version but never move
 
 ## Notes
 
+- **Source integrity (optional)**: pass `build.sh --sha256 <hash>` to verify the
+  downloaded Redis source tarball before building; a mismatch aborts. Omitted by
+  default (no checksum is stored in the repo).
 - The installer uses HTTPS and verifies a SHA-256 checksum. `curl` and GNU
   `wget` validate TLS certificates; BusyBox `wget` does not. Checksums protect
   against corruption, not a determined MITM — artifact signing
