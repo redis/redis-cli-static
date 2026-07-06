@@ -1,0 +1,9 @@
+# build artifacts
+/dist/
+
+# macOS
+.DS_Store
+
+# editor / temp
+*.swp
+*~

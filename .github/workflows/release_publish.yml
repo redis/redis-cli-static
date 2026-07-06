@@ -1,0 +1,128 @@
+name: Release Publish
+
+# Build the redis-cli binaries for a Redis release and publish them (+ the
+# install script) to S3.
+#
+# Hosts (matching redis-debian / redis-rpm):
+#   release_type=public   -> https://packages.redis.io          (production bucket)
+#   release_type=internal -> https://redis-test-package-repository.s3.us-east-2.amazonaws.com  (staging)
+#
+# Required repository configuration:
+#   secrets.AWS_ROLE_ARN          IAM role (OIDC) with write access
+#   vars.AWS_REGION               AWS region
+#   vars.REDIS_CLI_PROD_BUCKET    production bucket (served at packages.redis.io)
+#   vars.REDIS_CLI_STAGING_BUCKET staging bucket (default: redis-test-package-repository)
+#   vars.REDIS_CLI_PREFIX         production key prefix (default: redis-cli)
+#   vars.REDIS_CLI_DEV_PREFIX     staging key prefix (default: redis-cli-test)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Redis version/tag to build (e.g. 8.4.4). Defaults to .redis_version.'
+        required: false
+      release_type:
+        description: 'Where to publish'
+        type: choice
+        options: [internal, public]
+        default: internal
+      make_latest:
+        description: "Move the stable/latest pointers (public only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write   # for AWS OIDC
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.v.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          [ -n "$TAG" ] || TAG="$(cat .redis_version)"
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    needs: resolve
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      release_tag: ${{ needs.resolve.outputs.release_tag }}
+
+  publish:
+    needs: [resolve, build-and-test]
+    runs-on: ubuntu-latest
+    outputs:
+      base_url: ${{ steps.pub.outputs.base_url }}
+      prefix: ${{ steps.pub.outputs.prefix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-all
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist
+          find dist-all -type f -name 'redis-cli-*' -exec cp {} dist/ \;
+          ls -l dist
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Publish to S3
+        id: pub
+        env:
+          PUBLIC_BASE_URL: https://packages.redis.io
+          STAGING_BASE_URL: https://redis-test-package-repository.s3.us-east-2.amazonaws.com
+        run: |
+          if [ "${{ inputs.release_type }}" = "public" ]; then
+            BUCKET="${{ vars.REDIS_CLI_PROD_BUCKET }}"
+            BASE_URL="$PUBLIC_BASE_URL"
+            PREFIX="${{ vars.REDIS_CLI_PREFIX || 'redis-cli' }}"
+          else
+            BUCKET="${{ vars.REDIS_CLI_STAGING_BUCKET || 'redis-test-package-repository' }}"
+            BASE_URL="$STAGING_BASE_URL"
+            PREFIX="${{ vars.REDIS_CLI_DEV_PREFIX || 'redis-cli-test' }}"
+          fi
+          MAKE_LATEST=""
+          if [ "${{ inputs.release_type }}" = "public" ] && [ "${{ inputs.make_latest }}" = "true" ]; then
+            MAKE_LATEST="--make-latest"
+          fi
+          echo "Publishing release_type=${{ inputs.release_type }} bucket=$BUCKET base=$BASE_URL prefix=$PREFIX"
+          ./publish.sh \
+            --version "${{ needs.resolve.outputs.release_tag }}" \
+            --bucket "$BUCKET" \
+            --base-url "$BASE_URL" \
+            --prefix "$PREFIX" \
+            --dist dist \
+            $MAKE_LATEST
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+          echo "prefix=$PREFIX" >> "$GITHUB_OUTPUT"
+
+  # Validate the just-published artifacts install and run across many distros.
+  # Runs natively per arch (amd64 on ubuntu-latest, arm64 on ubuntu-24.04-arm),
+  # so test-distros.sh's containers need no QEMU.
+  smoke-test:
+    needs: [resolve, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke test published artifacts across distros
+        env:
+          REDIS_CLI_BASE_URL: ${{ needs.publish.outputs.base_url }}/${{ needs.publish.outputs.prefix }}
+        run: ./test-distros.sh --arch ${{ matrix.arch }} --version "${{ needs.resolve.outputs.release_tag }}"
