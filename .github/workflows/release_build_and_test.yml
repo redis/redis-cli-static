@@ -1,0 +1,30 @@
+name: Release Build and Test
+
+# Build and smoke-test the redis-cli binaries for a Redis release, without
+# publishing. Artifacts are attached to the run for inspection/download.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Redis version/tag to build (e.g. 8.4.4). Defaults to .redis_version.'
+        required: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.v.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          [ -n "$TAG" ] || TAG="$(cat .redis_version)"
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    needs: resolve
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      release_tag: ${{ needs.resolve.outputs.release_tag }}

@@ -1,0 +1,23 @@
+name: PR Build and Test
+
+# Build and smoke-test all targets on every pull request, so changes are
+# validated before merge. Builds the Redis version pinned in .redis_version.
+
+on:
+  pull_request:
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.v.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "release_tag=$(cat .redis_version)" >> "$GITHUB_OUTPUT"
+
+  build-and-test:
+    needs: resolve
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      release_tag: ${{ needs.resolve.outputs.release_tag }}
