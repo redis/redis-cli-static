@@ -25,11 +25,18 @@
 #   --version  Redis tag (e.g. 8.4.4) or branch (e.g. unstable)
 #   --os/--arch  default to the host
 #   --output   default ./dist
-#   --sha256   expected SHA-256 of the source tarball (skips verification if omitted)
+#   --sha256   verify against this SHA-256 (the pinned version is checked automatically)
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Pinned Redis source checksum, à la docker-library-redis's REDIS_DOWNLOAD_SHA.
+# The default build version's tarball is verified against this before building.
+# Bump both together when bumping .redis_version. Other versions can be checked
+# by passing --sha256 (see below).
+PINNED_REF="8.4.4"
+PINNED_SHA256="ff02092e1ca7bcf07f842d3ede8fd645218e51b3f903c254b7436c2a41583924"
 
 host_os()   { case "$(uname -s)" in Linux) echo linux;; Darwin) echo darwin;; *) echo "unsupported OS: $(uname -s)" >&2; exit 1;; esac; }
 host_arch() { case "$(uname -m)" in x86_64|amd64) echo amd64;; aarch64|arm64) echo arm64;; *) echo "unsupported arch: $(uname -m)" >&2; exit 1;; esac; }
@@ -163,6 +170,11 @@ OUTPUT="$(cd "$OUTPUT" && pwd)"
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/redis-cli-build.XXXXXX")"
 trap 'rm -rf "$BUILD_DIR" 2>/dev/null || true' EXIT
 SRC="$BUILD_DIR/redis"
+# Default to the hard-coded checksum when building the pinned version; an
+# explicit --sha256 always takes precedence (and enables verifying any version).
+if [ -z "$SHA256" ] && [ "$VERSION" = "$PINNED_REF" ]; then
+    SHA256="$PINNED_SHA256"
+fi
 fetch_redis "$VERSION" "$SRC" "$SHA256"
 
 case "$OS" in

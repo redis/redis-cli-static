@@ -143,9 +143,11 @@ Pre-releases (e.g. `8.8-rc1`) are installable by exact version but never move
 
 ## Notes
 
-- **Source integrity (optional)**: pass `build.sh --sha256 <hash>` to verify the
-  downloaded Redis source tarball before building; a mismatch aborts. Omitted by
-  default (no checksum is stored in the repo).
+- **Source integrity**: the pinned version's source tarball is verified against
+  a hard-coded SHA-256 in `build.sh` (`PINNED_SHA256`, like
+  `docker-library-redis`'s `REDIS_DOWNLOAD_SHA`) before building; a mismatch
+  aborts. Bump it together with `.redis_version`. Pass `--sha256 <hash>` to
+  verify a different `--version`.
 - The installer uses HTTPS and verifies a SHA-256 checksum. `curl` and GNU
   `wget` validate TLS certificates; BusyBox `wget` does not. Checksums protect
   against corruption, not a determined MITM — artifact signing
