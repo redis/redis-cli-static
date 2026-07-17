@@ -17,7 +17,7 @@
 # openSUSE, distroless, ...). Only a downloader (curl/wget) is required.
 #
 # Environment overrides:
-#   REDIS_CLI_VERSION      version to install: a concrete version (e.g. 8.4.4),
+#   REDIS_CLI_VERSION      version to install: a concrete version (e.g. 8.8.0),
 #                          or an alias "stable"/"latest" (default: "stable")
 #   REDIS_CLI_INSTALL_DIR  install destination (default: /usr/local/bin, or
 #                          ~/.local/bin if the former is not writable)

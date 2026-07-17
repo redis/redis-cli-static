@@ -1,0 +1,66 @@
+name: "Update Redis version"
+description: >
+  Pin the Redis source for a release line: write .redis_version and update
+  build.sh's PINNED_REF and PINNED_SHA256 to the tag, then commit to the release
+  version branch. Keeps source verification active for the new version.
+
+inputs:
+  release_tag:
+    description: "Release tag to pin (e.g. 8.8.0); 'unstable' is skipped"
+    required: true
+  release_version_branch:
+    description: "Branch to commit the pin to"
+    required: true
+  gh_token:
+    description: "GitHub token"
+    required: true
+
+outputs:
+  changed_files:
+    description: "Newline-separated files that were modified (empty if none)"
+    value: ${{ steps.repin.outputs.changed_files }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Re-pin Redis source
+      id: repin
+      shell: bash
+      run: |
+        TAG="${{ inputs.release_tag }}"
+        if [ "$TAG" = "unstable" ] || [ -z "$TAG" ]; then
+          echo "Skipping pin for '$TAG'"
+          echo "changed_files=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "$TAG" > .redis_version
+
+        tmp="$(mktemp)"
+        curl -fsSL "https://github.com/redis/redis/archive/${TAG}.tar.gz" -o "$tmp"
+        sha="$(sha256sum "$tmp" | awk '{print $1}')"
+        rm -f "$tmp"
+        echo "Computed source SHA-256 for $TAG: $sha"
+
+        sed -i -E "s|^PINNED_REF=.*|PINNED_REF=\"${TAG}\"|"       build.sh
+        sed -i -E "s|^PINNED_SHA256=.*|PINNED_SHA256=\"${sha}\"|" build.sh
+
+        if git diff --quiet .redis_version build.sh; then
+          echo "No version/pin changes"
+          echo "changed_files=" >> "$GITHUB_OUTPUT"
+        else
+          {
+            echo "changed_files<<EOF"
+            echo ".redis_version"
+            echo "build.sh"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Create verified commit
+      if: steps.repin.outputs.changed_files != ''
+      uses: iarekylew00t/verified-bot-commit@v1
+      with:
+        message: "Pin redis-cli source to ${{ inputs.release_tag }}"
+        files: ${{ steps.repin.outputs.changed_files }}
+        ref: ${{ inputs.release_version_branch }}

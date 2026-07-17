@@ -1,0 +1,45 @@
+name: "Slack notification"
+description: "Send a redis-cli release Slack notification (no-op if the webhook secret is unset)"
+
+inputs:
+  slack_func:
+    description: "slack_format_success_message | slack_format_failure_message"
+    required: true
+  release_tag:
+    description: "Release tag"
+    required: true
+  env:
+    description: "Target environment (production | staging)"
+    required: true
+  base_url:
+    description: "Base URL (…/redis-cli), for the success message install line"
+    required: false
+    default: ""
+  message:
+    description: "Failure message"
+    required: false
+    default: ""
+  SLACK_WEB_HOOK_URL:
+    description: "Slack webhook URL (if empty, this action does nothing)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Send Slack notification
+      if: inputs.SLACK_WEB_HOOK_URL != ''
+      shell: bash
+      run: |
+        . "${{ github.action_path }}/../common/slack.sh"
+        workflow_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        footer="Repo: ${{ github.repository }} | Commit: \`${{ github.sha }}\` | <$workflow_url|workflow run>"
+
+        if [ "${{ inputs.slack_func }}" = "slack_format_success_message" ]; then
+          payload="$(slack_format_success_message "${{ inputs.release_tag }}" "${{ inputs.base_url }}" "${{ inputs.env }}" "$footer")"
+        else
+          msg="${{ inputs.message }}"
+          [ -n "$msg" ] || msg=":x: redis-cli release failed"
+          payload="$(slack_format_failure_message "${{ inputs.release_tag }}" "$msg" "${{ inputs.env }}" "$footer")"
+        fi
+        printf '%s' "$payload" | curl -s --fail-with-body -d @- "${{ inputs.SLACK_WEB_HOOK_URL }}"

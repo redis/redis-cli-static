@@ -1,36 +1,42 @@
 name: Build and Test
 
-# Reusable workflow: builds statically linked redis-cli for all four targets
-# (linux/macos x amd64/arm64), smoke-tests each, and uploads them as run
-# artifacts. Called by release_build_and_test.yml and release_publish.yml.
-
 on:
   workflow_call:
     inputs:
       release_tag:
-        description: 'Redis version/tag to build (e.g. 8.4.4) or "unstable"'
+        description: 'Redis version/tag to build (e.g. 8.8.0) or "unstable"'
         required: true
         type: string
+      build_targets:
+        description: 'JSON array of {os,arch,runner} (from .github/.env)'
+        required: true
+        type: string
+      checkout_ref:
+        description: 'Ref to build (e.g. the release version branch); default = triggering ref'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: linux,  arch: amd64, runner: ubuntu-latest }
-          - { os: linux,  arch: arm64, runner: ubuntu-24.04-arm }
-          - { os: darwin, arch: amd64, runner: macos-14-large }   # macOS 14 x86_64
-          - { os: darwin, arch: arm64, runner: macos-14-xlarge }  # macOS 14 arm64
+        include: ${{ fromJSON(inputs.build_targets) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.checkout_ref }}
 
       - name: Install OpenSSL (macOS)
         if: matrix.os == 'darwin'
         run: brew install openssl@3 || brew upgrade openssl@3 || true
 
       - name: Build static redis-cli
+        # Release builds must have a verified source checksum (fail closed).
+        env:
+          REDIS_CLI_REQUIRE_VERIFIED_SOURCE: 1
         run: ./build.sh --version "${{ inputs.release_tag }}" --os ${{ matrix.os }} --arch ${{ matrix.arch }} --output dist
 
       - name: Smoke test
@@ -39,7 +45,7 @@ jobs:
           chmod +x "$bin"
           "$bin" --version
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: redis-cli-${{ matrix.os }}-${{ matrix.arch }}
           path: |

@@ -22,7 +22,7 @@
 #   build.sh --version REF [--os linux|darwin] [--arch amd64|arm64]
 #            [--output DIR] [--sha256 HASH]
 #
-#   --version  Redis tag (e.g. 8.4.4) or branch (e.g. unstable)
+#   --version  Redis tag (e.g. 8.8.0) or branch (e.g. unstable)
 #   --os/--arch  default to the host
 #   --output   default ./dist
 #   --sha256   verify against this SHA-256 (the pinned version is checked automatically)
@@ -35,8 +35,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The default build version's tarball is verified against this before building.
 # Bump both together when bumping .redis_version. Other versions can be checked
 # by passing --sha256 (see below).
-PINNED_REF="8.4.4"
-PINNED_SHA256="ff02092e1ca7bcf07f842d3ede8fd645218e51b3f903c254b7436c2a41583924"
+PINNED_REF="8.8.0"
+PINNED_SHA256="19736ce6117d90b3df032504c6e5c1ce41667ae47f073281b40d2f274c200a74"
 
 host_os()   { case "$(uname -s)" in Linux) echo linux;; Darwin) echo darwin;; *) echo "unsupported OS: $(uname -s)" >&2; exit 1;; esac; }
 host_arch() { case "$(uname -m)" in x86_64|amd64) echo amd64;; aarch64|arm64) echo arm64;; *) echo "unsupported arch: $(uname -m)" >&2; exit 1;; esac; }
@@ -174,6 +174,17 @@ SRC="$BUILD_DIR/redis"
 # explicit --sha256 always takes precedence (and enables verifying any version).
 if [ -z "$SHA256" ] && [ "$VERSION" = "$PINNED_REF" ]; then
     SHA256="$PINNED_SHA256"
+fi
+# Fail closed for release builds: when REDIS_CLI_REQUIRE_VERIFIED_SOURCE=1 (set
+# by the release workflows), refuse to build a concrete version tag whose source
+# checksum isn't known, instead of silently skipping verification. Branch builds
+# (e.g. "unstable", which have no stable tarball hash) start with a non-digit and
+# are exempt.
+if [ -z "$SHA256" ] && [ "${REDIS_CLI_REQUIRE_VERIFIED_SOURCE:-0}" = "1" ] \
+   && printf '%s' "$VERSION" | grep -Eq '^[0-9]'; then
+    echo "ERROR: refusing to build release '$VERSION' without a verified source checksum." >&2
+    echo "       PINNED_REF=$PINNED_REF. Re-pin (.redis_version + PINNED_SHA256) or pass --sha256." >&2
+    exit 1
 fi
 fetch_redis "$VERSION" "$SRC" "$SHA256"
 
