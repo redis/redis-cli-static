@@ -1,0 +1,28 @@
+name: "Parse env file"
+description: "Parses the .github/.env build-matrix file and exposes its keys as outputs"
+
+inputs:
+  env_file_path:
+    description: ".env file path"
+    default: '.github/.env'
+    required: false
+
+outputs:
+  BUILD_TARGETS:
+    description: "JSON array of build targets ({os,arch,runner})"
+    value: ${{ steps.parse.outputs.BUILD_TARGETS }}
+  SMOKE_TEST_ARCHES:
+    description: "JSON array of arches to smoke-test the published artifacts on"
+    value: ${{ steps.parse.outputs.SMOKE_TEST_ARCHES }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Parse env file
+      id: parse
+      shell: bash
+      run: |
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          [[ -z "$line" || "$line" =~ ^# ]] && continue
+          echo "$line" >> "$GITHUB_OUTPUT"
+        done < "${{ inputs.env_file_path }}"

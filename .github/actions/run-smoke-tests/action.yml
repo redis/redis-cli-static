@@ -1,0 +1,22 @@
+name: "Run smoke tests"
+description: "Install the published redis-cli across many distros and verify it runs (via test-distros.sh)"
+
+inputs:
+  arch:
+    description: "Architecture to smoke-test (amd64 | arch of the runner)"
+    required: true
+  version:
+    description: "Version to install and verify"
+    required: true
+  base_url:
+    description: "Base URL the installer downloads from (…/redis-cli)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Smoke test published artifacts across distros
+      shell: bash
+      env:
+        REDIS_CLI_BASE_URL: ${{ inputs.base_url }}
+      run: ./test-distros.sh --arch ${{ inputs.arch }} --version "${{ inputs.version }}"

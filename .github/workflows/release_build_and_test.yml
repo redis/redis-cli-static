@@ -1,30 +1,106 @@
 name: Release Build and Test
 
-# Build and smoke-test the redis-cli binaries for a Redis release, without
-# publishing. Artifacts are attached to the run for inspection/download.
+# Build and smoke-test redis-cli for a release, without publishing.
+#
+# Ensures the release/<x.y> branch exists, pins the Redis source version and
+# checksum for the tag on it, builds every target, and emits a release_handle
+# artifact that Release Publish consumes to locate the built binaries.
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Redis version/tag to build (e.g. 8.4.4). Defaults to .redis_version.'
+        description: 'Redis version/tag to build (e.g. 8.8.0) or "unstable". Defaults to .redis_version.'
+        required: false
+      release_type:
+        description: 'Type of release (public, internal)'
+        type: choice
+        options: [internal, public]
+        default: internal
+      workflow_uuid:
+        description: 'Optional UUID to identify this workflow run (used by release automation)'
         required: false
 
+run-name: "Release Build and Test${{ inputs.workflow_uuid && format(': {0}', inputs.workflow_uuid) || '' }}"
+
 jobs:
-  resolve:
+  prepare-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release branch and commit the version pin
     outputs:
       release_tag: ${{ steps.v.outputs.release_tag }}
+      release_version_branch: ${{ steps.ensure-branch.outputs.release_version_branch }}
+      BUILD_TARGETS: ${{ steps.parse.outputs.BUILD_TARGETS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - id: v
         run: |
           TAG="${{ inputs.release_tag }}"
           [ -n "$TAG" ] || TAG="$(cat .redis_version)"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
 
-  build-and-test:
-    needs: resolve
-    uses: ./.github/workflows/build-and-test.yml
+      - name: Ensure Release Branch
+        id: ensure-branch
+        uses: redis-developer/redis-oss-release-automation/.github/actions/ensure-release-branch@main
+        with:
+          release_tag: ${{ steps.v.outputs.release_tag }}
+          allow_modify: true
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Re-pin Redis source on the release branch
+        uses: ./.github/actions/update-redis-version
+        with:
+          release_tag: ${{ steps.v.outputs.release_tag }}
+          release_version_branch: ${{ steps.ensure-branch.outputs.release_version_branch }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Parse env file
+        id: parse
+        uses: ./.github/actions/parse-env-file
+
+  build-n-test:
+    needs: prepare-release
+    uses: ./.github/workflows/build-n-test.yml
     with:
-      release_tag: ${{ needs.resolve.outputs.release_tag }}
+      release_tag: ${{ needs.prepare-release.outputs.release_tag }}
+      build_targets: ${{ needs.prepare-release.outputs.BUILD_TARGETS }}
+      checkout_ref: ${{ needs.prepare-release.outputs.release_version_branch }}
+
+  # Carries this run's id so Release Publish can download the built binaries.
+  create-release-handle:
+    needs: [prepare-release, build-n-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release handle
+        run: |
+          cat > result.json <<JSON
+          {
+            "release_tag": "${{ needs.prepare-release.outputs.release_tag }}",
+            "run_id": ${{ github.run_id }},
+            "workflow_uuid": "${{ inputs.workflow_uuid }}",
+            "release_type": "${{ inputs.release_type }}"
+          }
+          JSON
+          cat result.json
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release_handle
+          path: result.json
+          retention-days: 90
+
+  slack-failure-notification:
+    needs: [prepare-release, build-n-test]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - uses: actions/checkout@v5
+      - name: Send Failure Slack notification
+        uses: ./.github/actions/slack-notification
+        with:
+          slack_func: slack_format_failure_message
+          release_tag: ${{ needs.prepare-release.outputs.release_tag }}
+          env: ${{ inputs.release_type == 'public' && 'production' || 'staging' }}
+          message: ":x: redis-cli build failed"
+          SLACK_WEB_HOOK_URL: ${{ secrets.SLACK_WEB_HOOK_URL }}

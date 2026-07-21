@@ -1,0 +1,33 @@
+name: CLI
+
+# Build and smoke-test every target on pull requests and pushes, using the Redis
+# version pinned in .redis_version.
+
+on:
+  pull_request:
+    branches: [unstable, "release/*"]
+  push:
+    branches: [unstable, "release/*"]
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  populate-env-vars:
+    runs-on: ubuntu-latest
+    outputs:
+      BUILD_TARGETS: ${{ steps.parse.outputs.BUILD_TARGETS }}
+      release_tag: ${{ steps.v.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Parse env file
+        id: parse
+        uses: ./.github/actions/parse-env-file
+      - id: v
+        run: echo "release_tag=$(cat .redis_version)" >> "$GITHUB_OUTPUT"
+
+  build-n-test:
+    needs: populate-env-vars
+    uses: ./.github/workflows/build-n-test.yml
+    with:
+      release_tag: ${{ needs.populate-env-vars.outputs.release_tag }}
+      build_targets: ${{ needs.populate-env-vars.outputs.BUILD_TARGETS }}
