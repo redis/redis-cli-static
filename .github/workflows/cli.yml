@@ -31,3 +31,28 @@ jobs:
     with:
       release_tag: ${{ needs.populate-env-vars.outputs.release_tag }}
       build_targets: ${{ needs.populate-env-vars.outputs.BUILD_TARGETS }}
+
+  # DIAGNOSTIC: verify the production S3 IAM role can be assumed via OIDC from
+  # the dispatched ref (e.g. release/8.8). This exercises the role's trust policy
+  # `sub` condition (repo:<repo>:ref:refs/heads/<branch>); it publishes nothing.
+  # Manual dispatch only so it never runs on regular PR/push CI. Start with:
+  #   gh workflow run cli.yml --ref release/8.8
+  assume-prod-role:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # required to request the GitHub OIDC token
+    steps:
+      - name: Show ref (this becomes the OIDC sub claim)
+        run: echo "Dispatched on ref=${{ github.ref }} sha=${{ github.sha }}"
+
+      - name: Assume prod IAM role via OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.CLI_S3_IAM_ARN }}
+          aws-region: ${{ secrets.CLI_S3_REGION }}
+          role-session-name: gha-test-assume-prod-${{ github.run_id }}
+
+      - name: Verify the assumed identity
+        run: aws sts get-caller-identity
