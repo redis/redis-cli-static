@@ -13,7 +13,9 @@ name: Release Publish
 #   CLI_S3_IAM_ARN[_STAGING]   IAM role to assume            (public / internal)
 #   CLI_S3_BUCKET[_STAGING]    target bucket                 (public / internal)
 #   CLI_S3_REGION[_STAGING]    bucket region                 (public / internal)
-#   SLACK_WEB_HOOK_URL         optional; release notifications
+#   SLACK_BOT_TOKEN            optional; Slack App bot token for notifications
+# Optional repository variable:
+#   SLACK_CHANNEL_ID           channel to post release notifications to
 
 on:
   workflow_dispatch:
@@ -186,4 +188,5 @@ jobs:
           env: ${{ inputs.release_type == 'public' && 'production' || 'staging' }}
           base_url: ${{ inputs.release_type == 'public' && 'https://packages.redis.io/redis-cli' || format('https://{0}.s3.{1}.amazonaws.com/redis-cli', secrets.CLI_S3_BUCKET_STAGING, secrets.CLI_S3_REGION_STAGING) }}
           message: ":x: redis-cli publish failed"
-          SLACK_WEB_HOOK_URL: ${{ secrets.SLACK_WEB_HOOK_URL }}
+          slack_channel_id: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
