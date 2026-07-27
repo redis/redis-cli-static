@@ -118,6 +118,12 @@ jobs:
           if [ "${{ inputs.release_type }}" = "public" ] || [ "${{ inputs.make_latest }}" = "true" ]; then
             MAKE_LATEST="--make-latest"
           fi
+          # Public releases are served world-readable from the prod bucket;
+          # staging keeps the old (private) behavior.
+          PUBLIC_READ=""
+          if [ "${{ inputs.release_type }}" = "public" ]; then
+            PUBLIC_READ="--public-read"
+          fi
           echo "Publishing release_type=${{ inputs.release_type }} bucket=$BUCKET base=$BASE_URL prefix=$PREFIX"
           ./publish.sh \
             --version "${{ steps.v.outputs.release_tag }}" \
@@ -125,7 +131,7 @@ jobs:
             --base-url "$BASE_URL" \
             --prefix "$PREFIX" \
             --dist dist \
-            $MAKE_LATEST
+            $MAKE_LATEST $PUBLIC_READ
 
       # Record the publish outcome for the release orchestrator to read.
       - name: Write release_info
