@@ -41,6 +41,14 @@ jobs:
           [ -n "$TAG" ] || TAG="$(cat .redis_version)"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      # Fail fast if the upstream Redis release archive for this tag is missing
+      # or malformed, before spending time on branch/version bookkeeping.
+      - name: Validate Redis release archive
+        if: steps.v.outputs.release_tag != 'unstable'
+        uses: redis-developer/redis-oss-release-automation/.github/actions/validate-redis-release-archive@main
+        with:
+          release_tag: ${{ steps.v.outputs.release_tag }}
+
       - name: Ensure Release Branch
         id: ensure-branch
         uses: redis-developer/redis-oss-release-automation/.github/actions/ensure-release-branch@main

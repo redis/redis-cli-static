@@ -5,9 +5,9 @@ name: CLI
 
 on:
   pull_request:
-    branches: [unstable, "release/*"]
+    branches: [main, "release/*"]
   push:
-    branches: [unstable, "release/*"]
+    branches: [main, "release/*"]
   workflow_dispatch:
   workflow_call:
 
