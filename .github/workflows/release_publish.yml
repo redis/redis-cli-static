@@ -49,6 +49,10 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # merge the version pin back to the release branch and tag it
+      actions: read     # download artifacts from the build run
+      id-token: write   # for AWS OIDC
     outputs:
       release_tag: ${{ steps.handle.outputs.release_tag || steps.v.outputs.release_tag }}
       smoke_targets: ${{ steps.parse.outputs.SMOKE_TEST_ARCHES }}
@@ -73,8 +77,10 @@ jobs:
           [ -n "$TAG" ] || TAG="$(cat .redis_version)"
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      # Verify the release branch exists; do not modify it.
+      # Verify the release branch exists; do not modify it. Its outputs name the
+      # version branch and release branch used for merge-back below.
       - name: Ensure Release Branch
+        id: ensure-branch
         uses: redis-developer/redis-oss-release-automation/.github/actions/ensure-release-branch@main
         with:
           release_tag: ${{ steps.v.outputs.release_tag }}
@@ -135,6 +141,25 @@ jobs:
             --dist dist \
             $MAKE_LATEST $PUBLIC_READ
 
+      # A public release is now live in the bucket, so promote the version pin:
+      # merge the version branch into release/<x.y> and tag the merge commit.
+      - name: Merge version branch back to release branch
+        id: merge-back
+        if: steps.v.outputs.release_tag != 'unstable' && inputs.release_type == 'public'
+        uses: redis-developer/redis-oss-release-automation/.github/actions/merge-branches-verified@main
+        with:
+          from_branch: ${{ steps.ensure-branch.outputs.release_version_branch }}
+          to_branch: ${{ steps.ensure-branch.outputs.release_branch }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create version tag
+        if: steps.merge-back.outputs.merge_commit_sha != ''
+        uses: redis-developer/redis-oss-release-automation/.github/actions/create-tag-verified@main
+        with:
+          tag: v${{ steps.v.outputs.release_tag }}
+          ref: ${{ steps.merge-back.outputs.merge_commit_sha }}
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
+
       # Record the publish outcome for the release orchestrator to read.
       - name: Write release_info
         run: |
@@ -173,6 +198,27 @@ jobs:
           arch: ${{ matrix.arch }}
           version: ${{ needs.publish.outputs.release_tag }}
           base_url: ${{ inputs.release_type == 'public' && 'https://packages.redis.io/redis-cli' || format('https://{0}.s3.{1}.amazonaws.com/redis-cli', secrets.CLI_S3_BUCKET_STAGING, secrets.CLI_S3_REGION_STAGING) }}
+
+  # Reflect the just-published version on the mainline (main) so the release
+  # orchestrator's version gate — which reads .redis_version from the mainline
+  # to decide whether a tag is newer than what's published — stays accurate.
+  # Public releases only; skipped for the 'unstable' source tag and internal runs.
+  reflect-mainline:
+    needs: publish
+    if: needs.publish.result == 'success' && inputs.release_type == 'public' && needs.publish.outputs.release_tag != 'unstable'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # commit the version pin to the mainline
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - name: Re-pin Redis source on mainline
+        uses: ./.github/actions/update-redis-version
+        with:
+          release_tag: ${{ needs.publish.outputs.release_tag }}
+          release_version_branch: main
+          gh_token: ${{ secrets.GITHUB_TOKEN }}
 
   slack-notification:
     needs: [publish, smoke-test]
