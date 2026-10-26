@@ -35,8 +35,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The default build version's tarball is verified against this before building.
 # Bump both together when bumping .redis_version. Other versions can be checked
 # by passing --sha256 (see below).
-PINNED_REF="8.10.2"
-PINNED_SHA256="541a374b753a8405683dd88560465791acc98cf09445ef10ec1bd286904273e8"
+PINNED_REF="8.10.3"
+PINNED_SHA256="85ae62e175cc76f638015fa18cb384b549b6808a765425d9e9d47466f69532ea"
 
 host_os()   { case "$(uname -s)" in Linux) echo linux;; Darwin) echo darwin;; *) echo "unsupported OS: $(uname -s)" >&2; exit 1;; esac; }
 host_arch() { case "$(uname -m)" in x86_64|amd64) echo amd64;; aarch64|arm64) echo arm64;; *) echo "unsupported arch: $(uname -m)" >&2; exit 1;; esac; }
