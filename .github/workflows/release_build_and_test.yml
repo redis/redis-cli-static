@@ -35,6 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Read the build matrix from the dispatched ref. Ensure Release Branch
+      # below switches the checkout to the version branch, whose .github/.env
+      # may carry stale runners.
+      - name: Parse env file
+        id: parse
+        uses: ./.github/actions/parse-env-file
+
       - id: v
         run: |
           TAG="${{ inputs.release_tag }}"
@@ -63,10 +70,6 @@ jobs:
           release_tag: ${{ steps.v.outputs.release_tag }}
           release_version_branch: ${{ steps.ensure-branch.outputs.release_version_branch }}
           gh_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Parse env file
-        id: parse
-        uses: ./.github/actions/parse-env-file
 
   build-n-test:
     needs: prepare-release
