@@ -103,4 +103,5 @@ jobs:
           release_tag: ${{ needs.prepare-release.outputs.release_tag }}
           env: ${{ inputs.release_type == 'public' && 'production' || 'staging' }}
           message: ":x: redis-cli build failed"
-          SLACK_WEB_HOOK_URL: ${{ secrets.SLACK_WEB_HOOK_URL }}
+          slack_channel_id: ${{ vars.SLACK_CHANNEL_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

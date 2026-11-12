@@ -1,10 +1,14 @@
 name: "Slack notification"
-description: "Send a redis-cli release Slack notification (no-op if the webhook secret is unset)"
+description: "Send a redis-cli release Slack notification via a Slack App bot token (no-op if the bot token or channel is unset)"
 
 inputs:
   slack_func:
     description: "slack_format_success_message | slack_format_failure_message"
     required: true
+  slack_channel_id:
+    description: "Slack channel ID to post to (if empty, this action does nothing)"
+    required: false
+    default: ""
   release_tag:
     description: "Release tag"
     required: true
@@ -19,27 +23,73 @@ inputs:
     description: "Failure message"
     required: false
     default: ""
-  SLACK_WEB_HOOK_URL:
-    description: "Slack webhook URL (if empty, this action does nothing)"
+  SLACK_BOT_TOKEN:
+    description: "Slack App bot token (if empty, this action does nothing)"
     required: false
     default: ""
+
+outputs:
+  slack_ts:
+    description: "Slack message timestamp"
+    value: ${{ steps.send-success.outputs.slack_ts || steps.send-failure.outputs.slack_ts }}
+  slack_url:
+    description: "Permalink to the Slack message"
+    value: ${{ steps.send-success.outputs.slack_url || steps.send-failure.outputs.slack_url }}
 
 runs:
   using: "composite"
   steps:
-    - name: Send Slack notification
-      if: inputs.SLACK_WEB_HOOK_URL != ''
+    - name: Send success Slack notification
+      id: send-success
+      if: inputs.slack_func == 'slack_format_success_message' && inputs.SLACK_BOT_TOKEN != '' && inputs.slack_channel_id != ''
       shell: bash
+      env:
+        SLACK_BOT_TOKEN: ${{ inputs.SLACK_BOT_TOKEN }}
       run: |
+        set -e
         . "${{ github.action_path }}/../common/slack.sh"
         workflow_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         footer="Repo: ${{ github.repository }} | Commit: \`${{ github.sha }}\` | <$workflow_url|workflow run>"
 
-        if [ "${{ inputs.slack_func }}" = "slack_format_success_message" ]; then
-          payload="$(slack_format_success_message "${{ inputs.release_tag }}" "${{ inputs.base_url }}" "${{ inputs.env }}" "$footer")"
-        else
-          msg="${{ inputs.message }}"
-          [ -n "$msg" ] || msg=":x: redis-cli release failed"
-          payload="$(slack_format_failure_message "${{ inputs.release_tag }}" "$msg" "${{ inputs.env }}" "$footer")"
+        msgfile="$(mktemp)"
+        slack_format_success_message \
+          "${{ inputs.slack_channel_id }}" \
+          "${{ inputs.release_tag }}" \
+          "${{ inputs.base_url }}" \
+          "${{ inputs.env }}" \
+          "$footer" > "$msgfile"
+
+        result="$(mktemp)"
+        if ! slack_send_with_token "$SLACK_BOT_TOKEN" < "$msgfile" > "$result"; then
+          echo "Failed to send message:"; cat "$msgfile"; exit 1
         fi
-        printf '%s' "$payload" | curl -s --fail-with-body -d @- "${{ inputs.SLACK_WEB_HOOK_URL }}"
+        slack_handle_message_result "${{ inputs.slack_channel_id }}" "$(cat "$msgfile")" < "$result"
+
+    - name: Send failure Slack notification
+      id: send-failure
+      if: inputs.slack_func == 'slack_format_failure_message' && inputs.SLACK_BOT_TOKEN != '' && inputs.slack_channel_id != ''
+      shell: bash
+      env:
+        SLACK_BOT_TOKEN: ${{ inputs.SLACK_BOT_TOKEN }}
+      run: |
+        set -e
+        . "${{ github.action_path }}/../common/slack.sh"
+        workflow_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        footer="Repo: ${{ github.repository }} | Commit: \`${{ github.sha }}\` | <$workflow_url|workflow run>"
+
+        msg="${{ inputs.message }}"
+        [ -n "$msg" ] || msg=":x: redis-cli release failed"
+
+        msgfile="$(mktemp)"
+        slack_format_failure_message \
+          "${{ inputs.slack_channel_id }}" \
+          "${{ inputs.release_tag }}" \
+          "$msg" \
+          "${{ inputs.env }}" \
+          "$footer" > "$msgfile"
+
+        result="$(mktemp)"
+        if ! slack_send_with_token "$SLACK_BOT_TOKEN" < "$msgfile" > "$result"; then
+          echo "Failed to send message:"; cat "$msgfile"; exit 1
+        fi
+        slack_handle_message_result "${{ inputs.slack_channel_id }}" "$(cat "$msgfile")" < "$result"
